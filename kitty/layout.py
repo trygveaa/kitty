@@ -12,7 +12,7 @@ from .fast_data_types import (
 )
 
 # Utils {{{
-central = Region((0, 0, 199, 199, 200, 200))
+central = without_docked = Region((0, 0, 199, 199, 200, 200))
 cell_width = cell_height = 20
 all_borders = True, True, True, True
 no_borders = False, False, False, False
@@ -84,13 +84,21 @@ def process_overlaid_windows(all_windows):
     return overlaid_windows, windows
 
 
+def process_docked_windows(all_windows):
+    _, non_overlaid_windows = process_overlaid_windows(all_windows)
+    docked_windows = [w for w in non_overlaid_windows if w.allow_remote_control]
+    windows = [w for w in non_overlaid_windows if w not in docked_windows]
+    return overlaid_windows, windows
+
+
 def window_geometry(xstart, xnum, ystart, ynum):
     return WindowGeometry(left=xstart, top=ystart, xnum=xnum, ynum=ynum, right=xstart + cell_width * xnum, bottom=ystart + cell_height * ynum)
 
 
 def layout_single_window(xdecoration_pairs, ydecoration_pairs, left_align=False):
-    xstart, xnum = next(layout_dimension(central.left, central.width, cell_width, xdecoration_pairs, left_align=align_top_left))
-    ystart, ynum = next(layout_dimension(central.top, central.height, cell_height, ydecoration_pairs, left_align=align_top_left))
+    xstart, xnum = next(layout_dimension(without_docked.left, without_docked.width, cell_width, xdecoration_pairs, left_align=align_top_left))
+    ystart, ynum = next(layout_dimension(without_docked.top, without_docked.height, cell_height, ydecoration_pairs, left_align=align_top_left))
+    print(f'height {without_docked.height}')
     return window_geometry(xstart, xnum, ystart, ynum)
 
 
@@ -186,8 +194,8 @@ class Layout:  # {{{
         self.single_window_margin_width = single_window_margin_width
         self.padding_width = padding_width
 
-    def bias_increment_for_cell(self, is_horizontal):
-        self._set_dimensions()
+    def bias_increment_for_cell(self, all_windows, is_horizontal):
+        self._set_dimensions(all_windows)
         if is_horizontal:
             return (cell_width + 1) / central.width
         return (cell_height + 1) / central.height
@@ -292,6 +300,9 @@ class Layout:  # {{{
                 all_windows.append(all_windows[i])
                 all_windows[i] = window
                 active_window_idx = i
+        # if window.allow_remote_control:
+        #     active_window_idx = 0
+        #     all_windows.insert(active_window_idx, window)
         if active_window_idx is None:
             if location == 'neighbor':
                 location = 'after'
@@ -373,12 +384,16 @@ class Layout:  # {{{
         self.set_active_window_in_os_window(active_window_idx)
         return active_window_idx
 
-    def _set_dimensions(self):
-        global central, cell_width, cell_height
+    def _set_dimensions(self, all_windows):
+        global central, without_docked, cell_width, cell_height
         central, tab_bar, vw, vh, cell_width, cell_height = viewport_for_window(self.os_window_id)
+        without_docked = central
+        docked_windows = [w for w in all_windows if w.allow_remote_control]
+        if docked_windows:
+            without_docked = Region((without_docked.left, without_docked.top + cell_height, without_docked.right, without_docked.bottom, without_docked.width, without_docked.height - cell_height))
 
     def __call__(self, all_windows, active_window_idx):
-        self._set_dimensions()
+        self._set_dimensions(all_windows)
         active_window = all_windows[active_window_idx]
         overlaid_windows, windows = process_overlaid_windows(all_windows)
         if overlaid_windows:
@@ -389,10 +404,26 @@ class Layout:  # {{{
             windows = all_windows
         self.update_visibility(all_windows, active_window, overlaid_windows)
         self.blank_rects = []
+        id_idx_map = {w.id: i for i, w in enumerate(all_windows)}
         if self.needs_all_windows:
             self.do_layout(windows, active_window_idx, all_windows)
         else:
-            self.do_layout(windows, active_window_idx)
+            self.do_layout(windows, active_window_idx, id_idx_map)
+
+
+        if isinstance(self, Vertical):
+            xlayout = self.xlayout(1)
+            xstart, xnum = next(xlayout)
+            decoration = self.margin_width + self.border_width + self.padding_width
+            decoration_pairs = ((decoration, decoration),)
+            ylayout = layout_dimension(central.top, cell_height, cell_height, decoration_pairs, left_align=align_top_left)
+            ystart, ynum = next(ylayout)
+            for i, w in enumerate(windows):
+                if w.allow_remote_control:
+                    w.set_geometry(i, window_geometry(xstart, xnum, ystart, ynum))
+                    # bottom blank rect
+                    self.bottom_blank_rect(windows[i])
+
         return idx_for_id(active_window.id, all_windows)
 
     # Utils {{{
@@ -400,25 +431,25 @@ class Layout:  # {{{
         mw = self.margin_width if self.single_window_margin_width < 0 else self.single_window_margin_width
         decoration_pairs = ((self.padding_width + mw, self.padding_width + mw),)
         wg = layout_single_window(decoration_pairs, decoration_pairs)
-        w.set_geometry(0, wg)
+        w.set_geometry(0, wg) # TODO: wrong index
         self.blank_rects = blank_rects_for_window(w)
 
     def xlayout(self, num, bias=None, left=None, width=None):
         decoration = self.margin_width + self.border_width + self.padding_width
         decoration_pairs = tuple(repeat((decoration, decoration), num))
         if left is None:
-            left = central.left
+            left = without_docked.left
         if width is None:
-            width = central.width
+            width = without_docked.width
         return layout_dimension(left, width, cell_width, decoration_pairs, bias=bias, left_align=align_top_left)
 
     def ylayout(self, num, left_align=True, bias=None, top=None, height=None):
         decoration = self.margin_width + self.border_width + self.padding_width
         decoration_pairs = tuple(repeat((decoration, decoration), num))
         if top is None:
-            top = central.top
+            top = without_docked.top
         if height is None:
-            height = central.height
+            height = without_docked.height
         return layout_dimension(top, height, cell_height, decoration_pairs, bias=bias, left_align=align_top_left)
 
     def simple_blank_rects(self, first_window, last_window):
@@ -914,18 +945,27 @@ class Vertical(Layout):  # {{{
         self.biased_map = candidate
         return True
 
-    def do_layout(self, windows, active_window_idx):
-        window_count = len(windows)
+    def do_layout(self, windows, active_window_idx, id_idx_map):
+        window_count = len([w for w in windows if not w.allow_remote_control])
+        if window_count == 0:
+            return
         if window_count == 1:
             return self.layout_single_window(windows[0])
 
         xlayout = self.xlayout(1)
         xstart, xnum = next(xlayout)
         ylayout = self.variable_layout(window_count, self.biased_map)
-        for i, (w, (ystart, ynum)) in enumerate(zip(windows, ylayout)):
-            w.set_geometry(i, window_geometry(xstart, xnum, ystart, ynum))
-            # bottom blank rect
-            self.bottom_blank_rect(windows[i])
+        print(f'windows {windows}')
+        # for i, (w, (ystart, ynum)) in enumerate(zip(windows, ylayout)):
+        for i, w in enumerate(windows):
+            print(f'window {w}')
+            if not w.allow_remote_control:
+                (ystart, ynum) = next(ylayout)
+                wg = window_geometry(xstart, xnum, ystart, ynum)
+                print(f'setting wg {wg}')
+                w.set_geometry(i, wg)
+                # bottom blank rect
+                self.bottom_blank_rect(windows[i])
 
         # left, top and right blank rects
         self.simple_blank_rects(windows[0], windows[-1])

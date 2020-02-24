@@ -181,8 +181,8 @@ class Window:
         return self.override_title or self.child_title
 
     def __repr__(self):
-        return 'Window(title={}, id={}, overlay_for={}, overlay_window_id={})'.format(
-                self.title, self.id, self.overlay_for, self.overlay_window_id)
+        return 'Window(title={}, id={}, overlay_for={}, overlay_window_id={}, allow_remote_control={})'.format(
+                self.title, self.id, self.overlay_for, self.overlay_window_id, self.allow_remote_control)
 
     def as_dict(self, is_focused=False):
         return dict(

@@ -382,11 +382,9 @@ class Layout:  # {{{
         active_window = all_windows[active_window_idx]
         overlaid_windows, windows = process_overlaid_windows(all_windows)
         if overlaid_windows:
-            windows = [w for w in all_windows if w not in overlaid_windows]
-            active_window_idx = idx_for_id(active_window.id, windows)
-            if active_window_idx is None:
-                active_window_idx = idx_for_id(active_window.overlay_window_id, windows) or 0
-            active_window = windows[active_window_idx]
+            if active_window not in windows:
+                active_window_idx = idx_for_id(active_window.overlay_window_id, all_windows) or 0
+                active_window = windows[active_window_idx]
         else:
             windows = all_windows
         self.update_visibility(all_windows, active_window, overlaid_windows)

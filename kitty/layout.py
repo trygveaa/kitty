@@ -88,7 +88,7 @@ def process_docked_windows(all_windows):
     _, non_overlaid_windows = process_overlaid_windows(all_windows)
     docked_windows = [w for w in non_overlaid_windows if w.allow_remote_control]
     windows = [w for w in non_overlaid_windows if w not in docked_windows]
-    return overlaid_windows, windows
+    return docked_windows, windows
 
 
 def window_geometry(xstart, xnum, ystart, ynum):
@@ -390,6 +390,7 @@ class Layout:  # {{{
         without_docked = central
         docked_windows = [w for w in all_windows if w.allow_remote_control]
         if docked_windows:
+            # h = self.margin_width + self.border_width + self.padding_width + cell_height
             without_docked = Region((without_docked.left, without_docked.top + cell_height, without_docked.right, without_docked.bottom, without_docked.width, without_docked.height - cell_height))
 
     def __call__(self, all_windows, active_window_idx):
@@ -405,11 +406,12 @@ class Layout:  # {{{
         self.update_visibility(all_windows, active_window, overlaid_windows)
         self.blank_rects = []
         id_idx_map = {w.id: i for i, w in enumerate(all_windows)}
-        if self.needs_all_windows:
-            self.do_layout(windows, active_window_idx, all_windows)
-        else:
-            self.do_layout(windows, active_window_idx, id_idx_map)
-
+        docked_windows, windows = process_docked_windows(all_windows)
+        if windows:
+            if self.needs_all_windows:
+                self.do_layout(windows, active_window_idx, all_windows)
+            else:
+                self.do_layout(windows, active_window_idx, id_idx_map)
 
         if isinstance(self, Vertical):
             xlayout = self.xlayout(1)
@@ -418,20 +420,20 @@ class Layout:  # {{{
             decoration_pairs = ((decoration, decoration),)
             ylayout = layout_dimension(central.top, cell_height, cell_height, decoration_pairs, left_align=align_top_left)
             ystart, ynum = next(ylayout)
-            for i, w in enumerate(windows):
-                if w.allow_remote_control:
-                    w.set_geometry(i, window_geometry(xstart, xnum, ystart, ynum))
-                    # bottom blank rect
-                    self.bottom_blank_rect(windows[i])
+            for w in docked_windows:
+                w.set_geometry(id_idx_map[w.id], window_geometry(xstart, xnum, ystart, ynum))
+                # bottom blank rect
+                self.bottom_blank_rect(w)
 
         return idx_for_id(active_window.id, all_windows)
 
     # Utils {{{
-    def layout_single_window(self, w):
+    def layout_single_window(self, w, id_idx_map):
         mw = self.margin_width if self.single_window_margin_width < 0 else self.single_window_margin_width
         decoration_pairs = ((self.padding_width + mw, self.padding_width + mw),)
         wg = layout_single_window(decoration_pairs, decoration_pairs)
-        w.set_geometry(0, wg) # TODO: wrong index
+        print(id_idx_map[w.id])
+        w.set_geometry(id_idx_map[w.id], wg)
         self.blank_rects = blank_rects_for_window(w)
 
     def xlayout(self, num, bias=None, left=None, width=None):
@@ -946,26 +948,17 @@ class Vertical(Layout):  # {{{
         return True
 
     def do_layout(self, windows, active_window_idx, id_idx_map):
-        window_count = len([w for w in windows if not w.allow_remote_control])
-        if window_count == 0:
-            return
+        window_count = len(windows)
         if window_count == 1:
-            return self.layout_single_window(windows[0])
+            return self.layout_single_window(windows[0], id_idx_map)
 
         xlayout = self.xlayout(1)
         xstart, xnum = next(xlayout)
         ylayout = self.variable_layout(window_count, self.biased_map)
-        print(f'windows {windows}')
-        # for i, (w, (ystart, ynum)) in enumerate(zip(windows, ylayout)):
-        for i, w in enumerate(windows):
-            print(f'window {w}')
-            if not w.allow_remote_control:
-                (ystart, ynum) = next(ylayout)
-                wg = window_geometry(xstart, xnum, ystart, ynum)
-                print(f'setting wg {wg}')
-                w.set_geometry(i, wg)
-                # bottom blank rect
-                self.bottom_blank_rect(windows[i])
+        for w, (ystart, ynum) in zip(windows, ylayout):
+            w.set_geometry(id_idx_map[w.id], window_geometry(xstart, xnum, ystart, ynum))
+            # bottom blank rect
+            self.bottom_blank_rect(w)
 
         # left, top and right blank rects
         self.simple_blank_rects(windows[0], windows[-1])
